@@ -1,0 +1,24 @@
+{
+  "machine": {
+    "host": "192.168.1.115",
+    "port": 8080
+  },
+  "server": {
+    "port": 3002,
+    "host": "0.0.0.0"
+  },
+  "display": {
+    "mode": "auto",
+    "compactWidth": 800,
+    "compactHeight": 480
+  },
+  "cache": {
+    "maxShots": 500,
+    "dbPath": "./data/history.db"
+  },
+  "realtime": {
+    "sampleRate": 10,
+    "maxGraphPoints": 300,
+    "bufferSize": 50
+  }
+}
