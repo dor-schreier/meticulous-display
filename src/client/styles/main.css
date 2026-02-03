@@ -803,8 +803,8 @@ body {
   background: var(--accent-secondary);
 }
 
-/* Desktop Layout (> 800px) */
-@media (min-width: 801px) {
+/* Desktop Layout (> 1024px) */
+@media (min-width: 1025px) {
   .app-container {
     flex-direction: row;
   }
@@ -850,8 +850,8 @@ body {
   }
 }
 
-/* Compact/Touch Layout (< 800px) */
-@media (max-width: 800px) {
+/* Compact/Touch Layout (< 1024px) */
+@media (max-width: 1024px) {
   :root {
     --font-size-base: 14px;
     --spacing-md: 12px;
