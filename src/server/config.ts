@@ -49,8 +49,8 @@ const defaultConfig: AppConfig = {
   },
   display: {
     mode: 'auto',
-    compactWidth: 800,
-    compactHeight: 480
+    compactWidth: 1024,
+    compactHeight: 600
   },
   cache: {
     maxShots: 500,
