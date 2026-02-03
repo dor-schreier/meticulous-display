@@ -93,8 +93,12 @@ Environment=NODE_ENV=production
 WantedBy=multi-user.target
 EOF
 
+# Add user to video group for X server hardware access
+echo "11. Adding user to video and input groups..."
+usermod -a -G video,input $ACTUAL_USER
+
 # Create X server service
-echo "11. Creating X server service..."
+echo "12. Creating X server service..."
 cat > /etc/systemd/system/xserver.service << EOF
 [Unit]
 Description=X Server for Meticulous Kiosk
@@ -105,17 +109,21 @@ Type=simple
 User=$ACTUAL_USER
 WorkingDirectory=$ACTUAL_HOME
 Environment=HOME=$ACTUAL_HOME
-# Start X server on display :0
-ExecStart=/usr/bin/startx -- :0 vt7
-Restart=on-failure
-RestartSec=5
+TTYPath=/dev/tty7
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+# Use X directly instead of startx wrapper (systemd-compatible)
+ExecStart=/usr/bin/X :0 -nocursor -nolisten tcp vt7
+Restart=always
+RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
 # Create kiosk service
-echo "12. Creating kiosk service..."
+echo "13. Creating kiosk service..."
 cat > /etc/systemd/system/meticulous-kiosk.service << EOF
 [Unit]
 Description=Meticulous Display Kiosk
@@ -140,7 +148,7 @@ WantedBy=multi-user.target
 EOF
 
 # Create kiosk start script
-echo "13. Creating kiosk start script..."
+echo "14. Creating kiosk start script..."
 cat > $APP_DIR/scripts/start-kiosk.sh << 'EOF'
 #!/bin/bash
 
@@ -184,7 +192,7 @@ EOF
 chmod +x $APP_DIR/scripts/start-kiosk.sh
 
 # Create autologin for kiosk (backup method)
-echo "14. Setting up auto-login (backup method)..."
+echo "15. Setting up auto-login (backup method)..."
 mkdir -p /etc/systemd/system/getty@tty1.service.d/
 cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf << EOF
 [Service]
