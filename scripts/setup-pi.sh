@@ -42,7 +42,8 @@ apt-get install -y build-essential python3
 
 # Install Chromium for kiosk mode
 echo "4. Installing Chromium..."
-apt-get install -y chromium-browser
+# Try chromium first (newer OS), fall back to chromium-browser (older OS)
+apt-get install -y chromium 2>/dev/null || apt-get install -y chromium-browser
 
 # Install X server and utils for kiosk
 echo "5. Installing X server components..."
@@ -129,8 +130,18 @@ unclutter -idle 1 -root &
 # Wait for server to be ready
 sleep 3
 
+# Detect chromium command (chromium or chromium-browser)
+if command -v chromium &> /dev/null; then
+  CHROMIUM_CMD="chromium"
+elif command -v chromium-browser &> /dev/null; then
+  CHROMIUM_CMD="chromium-browser"
+else
+  echo "Chromium not found!"
+  exit 1
+fi
+
 # Start Chromium in kiosk mode
-chromium-browser \
+$CHROMIUM_CMD \
   --kiosk \
   --noerrdialogs \
   --disable-infobars \
