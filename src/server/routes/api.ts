@@ -1,4 +1,7 @@
 import { Router, Request, Response } from 'express';
+import path from 'path';
+import fs from 'fs';
+import axios from 'axios';
 import { meticulousClient, DATA_SERIES } from '../meticulous-client';
 import { cacheManager } from '../cache';
 import { config } from '../config';
@@ -50,12 +53,39 @@ router.get('/history', async (req: Request, res: Response) => {
   const offset = parseInt(req.query.offset as string) || 0;
   const refresh = req.query.refresh === 'true';
 
-  // Optionally refresh from machine
+  // Optionally refresh from machine (incremental sync)
   if (refresh) {
     try {
+      const latestLocalTime = cacheManager.getLatestShotTime();
       const machineHistory = await meticulousClient.getHistoryListing();
+      const machineUrl = `http://${config.machine.host}:${config.machine.port}`;
+
+      // Only sync shots newer than our latest
+      let newShotsCount = 0;
       for (const shot of machineHistory) {
-        cacheManager.upsertShotListing(shot);
+        if (shot.time > latestLocalTime) {
+          cacheManager.upsertShotListing(shot);
+          newShotsCount++;
+
+          // Download profile image in background if available
+          if (shot.profile?.display?.image) {
+            cacheManager.downloadProfileImage(shot.profile.display.image, machineUrl)
+              .then(localFilename => {
+                if (localFilename) {
+                  cacheManager.updateLocalImage(
+                    shot.db_key || parseInt(shot.id),
+                    shot.id,
+                    localFilename
+                  );
+                }
+              })
+              .catch(err => console.error('Failed to download image for shot', shot.id, err));
+          }
+        }
+      }
+
+      if (newShotsCount > 0) {
+        console.log(`Synced ${newShotsCount} new shots from machine`);
       }
     } catch (err) {
       console.error('Failed to refresh history from machine:', err);
@@ -80,7 +110,7 @@ router.get('/history/:id', async (req: Request, res: Response) => {
 
   // Check cache first
   let shot = cacheManager.getShot(id);
-  
+
   // If we don't have full data, fetch from machine
   if (!shot || !shot.hasFullData) {
     try {
@@ -88,6 +118,22 @@ router.get('/history/:id', async (req: Request, res: Response) => {
       if (fullShot) {
         cacheManager.upsertFullShot(fullShot);
         shot = cacheManager.getShot(id);
+
+        // Download profile image if available and not already cached
+        if (fullShot.profile?.display?.image && !shot?.profileImageLocal) {
+          const machineUrl = `http://${config.machine.host}:${config.machine.port}`;
+          cacheManager.downloadProfileImage(fullShot.profile.display.image, machineUrl)
+            .then(localFilename => {
+              if (localFilename) {
+                cacheManager.updateLocalImage(
+                  fullShot.db_key || parseInt(fullShot.id),
+                  fullShot.id,
+                  localFilename
+                );
+              }
+            })
+            .catch(err => console.error('Failed to download image for shot', fullShot.id, err));
+        }
       }
     } catch (err) {
       console.error('Failed to fetch shot from machine:', err);
@@ -178,6 +224,66 @@ router.get('/stats', async (req: Request, res: Response) => {
 router.get('/profiles', async (req: Request, res: Response) => {
   const profiles = await meticulousClient.listProfiles();
   res.json(profiles);
+});
+
+// Get profile image - serve from local cache or proxy from machine
+router.get('/profile-image/:imageName(*)', async (req: Request, res: Response) => {
+  const imageName = req.params.imageName;
+  if (!imageName) {
+    return res.status(400).json({ error: 'Image name is required' });
+  }
+
+  // Handle data URLs directly (base64 encoded images)
+  if (imageName.startsWith('data:')) {
+    return res.redirect(imageName);
+  }
+
+  // Check if we have a local copy (just filename, not a path)
+  if (!imageName.startsWith('/') && !imageName.startsWith('http')) {
+    const localPath = path.join(config.cache.imagesPath, imageName);
+    if (fs.existsSync(localPath)) {
+      return res.sendFile(path.resolve(localPath));
+    }
+  }
+
+  // Otherwise, proxy from machine (don't redirect to avoid CSP issues)
+  try {
+    const machineUrl = `http://${config.machine.host}:${config.machine.port}`;
+    let fullUrl: string;
+
+    // Build the full URL
+    if (imageName.startsWith('http://') || imageName.startsWith('https://')) {
+      fullUrl = imageName;
+    } else if (imageName.startsWith('/')) {
+      fullUrl = `${machineUrl}${imageName}`;
+    } else {
+      // It's a filename - ask the API for the path
+      const imagePath = meticulousClient.getProfileImageUrl(imageName);
+      fullUrl = imagePath.startsWith('http') ? imagePath : `${machineUrl}${imagePath}`;
+    }
+
+    // Fetch image from machine and proxy it
+    const response = await axios.get(fullUrl, {
+      responseType: 'arraybuffer',
+      timeout: 10000,
+      headers: {
+        'Accept': 'image/*'
+      }
+    });
+
+    // Set appropriate content type
+    const contentType = response.headers['content-type'] || 'image/jpeg';
+    res.setHeader('Content-Type', contentType);
+
+    // Set cache headers for better performance
+    res.setHeader('Cache-Control', 'public, max-age=86400'); // 24 hours
+
+    // Send the image data
+    res.send(Buffer.from(response.data));
+  } catch (error) {
+    console.error('Failed to proxy profile image:', error);
+    res.status(404).json({ error: 'Image not found or machine unreachable' });
+  }
 });
 
 // Get app configuration (for frontend)

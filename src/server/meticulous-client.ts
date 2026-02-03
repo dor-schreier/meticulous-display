@@ -383,6 +383,10 @@ export class MeticulousClient extends EventEmitter {
     }
   }
 
+  getProfileImageUrl(imageName: string): string {
+    return this.api.getProfileImageUrl(imageName);
+  }
+
   disconnect(): void {
     this.isShuttingDown = true;
     if (this.reconnectTimer) {

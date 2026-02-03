@@ -20,6 +20,8 @@ export interface DisplayConfig {
 export interface CacheConfig {
   maxShots: number;
   dbPath: string;
+  resetSchemaOnStart: boolean;
+  imagesPath: string;
 }
 
 export interface RealtimeConfig {
@@ -52,7 +54,9 @@ const defaultConfig: AppConfig = {
   },
   cache: {
     maxShots: 500,
-    dbPath: './data/history.db'
+    dbPath: './data/history.db',
+    resetSchemaOnStart: false,
+    imagesPath: './data/images'
   },
   realtime: {
     sampleRate: 10,

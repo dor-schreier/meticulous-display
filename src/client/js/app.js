@@ -9,13 +9,14 @@ import { store } from './state/store.js';
 
 // Config & Utils
 import { DATA_SERIES } from './config/chartConfig.js';
-import { loadVisibleSeries, saveVisibleSeries } from './utils/storage.js';
+import { loadVisibleSeries, saveVisibleSeries, loadIdleVisibleSeries, saveIdleVisibleSeries, loadSeriesColors, saveSeriesColors } from './utils/storage.js';
 import { formatTime, formatWeight, formatFlow, formatTemp, formatTimeOfDay } from './utils/formatting.js';
 
 // Components
 import { useChart } from './components/chart.js';
 import { DataSeriesSelector } from './components/settings.js';
 import { HistoryView } from './components/shotHistory.js';
+import { IdleSensors } from './components/idleSensors.js';
 
 const html = htm.bind(h);
 
@@ -151,10 +152,10 @@ function ConfigurableChart({ data, dataSeries, visibleSeries, height = 200, isHi
 // View Components
 // ============================================
 
-function LiveView({ status, shotData, connected, dataSeries, visibleSeries }) {
+function LiveView({ status, shotData, connected, dataSeries, visibleSeries, idleVisibleSeries, temperatures }) {
   const [lastShot, setLastShot] = useState(null);
   const isBrewing = status?.extracting || status?.state === 'brewing';
-  
+
   useEffect(() => {
     if (!isBrewing) {
       api.getLastShot()
@@ -162,7 +163,7 @@ function LiveView({ status, shotData, connected, dataSeries, visibleSeries }) {
         .catch(console.error);
     }
   }, [isBrewing]);
-  
+
   if (!connected) {
     return html`
       <div class="idle-view">
@@ -172,16 +173,16 @@ function LiveView({ status, shotData, connected, dataSeries, visibleSeries }) {
       </div>
     `;
   }
-  
+
   if (isBrewing) {
     const latest = shotData[shotData.length - 1] || {};
     return html`
       <div>
-        <${ConfigurableChart} 
-          data=${shotData} 
-          dataSeries=${dataSeries} 
-          visibleSeries=${visibleSeries} 
-          height=${220} 
+        <${ConfigurableChart}
+          data=${shotData}
+          dataSeries=${dataSeries}
+          visibleSeries=${visibleSeries}
+          height=${220}
         />
         <${StatsGrid} data=${{
           time: latest.time,
@@ -192,10 +193,20 @@ function LiveView({ status, shotData, connected, dataSeries, visibleSeries }) {
       </div>
     `;
   }
-  
+
+  // Prefer local cached image, fall back to remote
+  const profileImage = lastShot?.profileImageLocal || lastShot?.profileImage || lastShot?.profile?.display?.image;
+  const imageUrl = profileImage ? `/api/profile-image/${encodeURIComponent(profileImage)}` : null;
+
   return html`
     <div class="idle-view">
-      <div class="idle-view__icon">☕</div>
+      ${imageUrl ? html`
+        <div class="idle-view__image">
+          <img src=${imageUrl} alt=${lastShot?.name || 'Profile'} />
+        </div>
+      ` : html`
+        <div class="idle-view__icon">☕</div>
+      `}
       ${lastShot ? html`
         <div class="idle-view__title">Last Shot</div>
         <div class="idle-view__time">${formatTimeOfDay(lastShot.time)}</div>
@@ -204,7 +215,7 @@ function LiveView({ status, shotData, connected, dataSeries, visibleSeries }) {
         </div>
         <div class="idle-view__stats">
           ${formatWeight(lastShot.yieldWeight || 0)} • ${formatTime(lastShot.duration || 0)}${
-            lastShot.rating === 'like' ? ' 👍' : 
+            lastShot.rating === 'like' ? ' 👍' :
             lastShot.rating === 'dislike' ? ' 👎' : ''
           }
         </div>
@@ -212,6 +223,13 @@ function LiveView({ status, shotData, connected, dataSeries, visibleSeries }) {
         <div class="idle-view__title">Ready</div>
         <div class="idle-view__time">Waiting for extraction</div>
       `}
+
+      <${IdleSensors}
+        status=${status}
+        temperatures=${temperatures}
+        dataSeries=${dataSeries}
+        visibleSeries=${idleVisibleSeries}
+      />
     </div>
   `;
 }
@@ -263,6 +281,10 @@ function ShotDetailView({ shotId, onBack, dataSeries, visibleSeries }) {
     `;
   }
   
+  // Prefer local cached image, fall back to remote
+  const profileImage = shot.profileImageLocal || shot.profileImage || shot.profile?.display?.image;
+  const imageUrl = profileImage ? `/api/profile-image/${encodeURIComponent(profileImage)}` : null;
+
   return html`
     <div>
       <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 16px">
@@ -270,16 +292,21 @@ function ShotDetailView({ shotId, onBack, dataSeries, visibleSeries }) {
           <span class="nav-button__icon">${Icons.back}</span>
           Back
         </button>
+        ${imageUrl && html`
+          <div class="shot-detail__image">
+            <img src=${imageUrl} alt=${shot.profileName} />
+          </div>
+        `}
         <h2 style="flex: 1">${shot.profileName}</h2>
         <div class="rating-buttons">
-          <button 
-            class="rating-button ${shot.rating === 'like' ? 'rating-button--active' : ''}" 
+          <button
+            class="rating-button ${shot.rating === 'like' ? 'rating-button--active' : ''}"
             onClick=${() => handleRate('like')}
           >
             👍
           </button>
-          <button 
-            class="rating-button ${shot.rating === 'dislike' ? 'rating-button--active' : ''}" 
+          <button
+            class="rating-button ${shot.rating === 'dislike' ? 'rating-button--active' : ''}"
             onClick=${() => handleRate('dislike')}
           >
             👎
@@ -315,7 +342,7 @@ function ShotDetailView({ shotId, onBack, dataSeries, visibleSeries }) {
         <div class="stat-card">
           <div class="stat-card__label">Date</div>
           <div class="stat-card__value" style="font-size: 14px">
-            ${new Date(shot.time).toLocaleDateString()}
+            ${new Date(shot.time < 10000000000 ? shot.time * 1000 : shot.time).toLocaleDateString()}
           </div>
         </div>
       </div>
@@ -423,46 +450,95 @@ function App() {
   const [shotData, setShotData] = useState([]);
   const [connected, setConnected] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [temperatures, setTemperatures] = useState(null);
   const [dataSeries, setDataSeries] = useState([]);
   const [visibleSeries, setVisibleSeries] = useState([]);
-  
-  // Load data series configuration
+  const [idleVisibleSeries, setIdleVisibleSeries] = useState([]);
+
+  // Load data series configuration with custom colors
   useEffect(() => {
     api.getDataSeries()
       .then(series => {
-        setDataSeries(series);
-        setVisibleSeries(loadVisibleSeries(series));
+        const seriesWithColors = loadSeriesColors(series);
+        setDataSeries(seriesWithColors);
+        setVisibleSeries(loadVisibleSeries(seriesWithColors));
+        setIdleVisibleSeries(loadIdleVisibleSeries(seriesWithColors));
       })
       .catch(err => {
         console.error('Failed to load data series:', err);
         // Fallback to default config
-        setDataSeries(DATA_SERIES);
-        setVisibleSeries(loadVisibleSeries(DATA_SERIES));
+        const seriesWithColors = loadSeriesColors(DATA_SERIES);
+        setDataSeries(seriesWithColors);
+        setVisibleSeries(loadVisibleSeries(seriesWithColors));
+        setIdleVisibleSeries(loadIdleVisibleSeries(seriesWithColors));
       });
   }, []);
-  
-  // Handle series visibility toggle
+
+  // Handle chart view series visibility toggle
   const handleToggleSeries = useCallback((id) => {
     setVisibleSeries(prev => {
-      const next = prev.includes(id) 
-        ? prev.filter(x => x !== id) 
+      const next = prev.includes(id)
+        ? prev.filter(x => x !== id)
         : [...prev, id];
       saveVisibleSeries(next);
       return next;
     });
   }, []);
-  
+
+  // Handle idle view series visibility toggle
+  const handleToggleIdleSeries = useCallback((id) => {
+    setIdleVisibleSeries(prev => {
+      const next = prev.includes(id)
+        ? prev.filter(x => x !== id)
+        : [...prev, id];
+      saveIdleVisibleSeries(next);
+      return next;
+    });
+  }, []);
+
+  // Handle color change
+  const handleColorChange = useCallback((seriesId, color) => {
+    console.log('[handleColorChange]', seriesId, color);
+
+    const updatedSeries = dataSeries.map(s =>
+      s.id === seriesId ? { ...s, color } : s
+    );
+
+    console.log('[handleColorChange] Updated series:', updatedSeries.find(s => s.id === seriesId));
+    setDataSeries(updatedSeries);
+
+    // Save only custom colors to localStorage
+    const colorMap = {};
+    updatedSeries.forEach(s => {
+      const defaultSeries = DATA_SERIES.find(ds => ds.id === s.id);
+      if (s.color !== defaultSeries?.color) {
+        colorMap[s.id] = s.color;
+      }
+    });
+
+    console.log('[handleColorChange] Saving colorMap:', colorMap);
+    saveSeriesColors(colorMap);
+  }, [dataSeries]);
+
   // Reset to default series
   const handleResetSeries = useCallback(() => {
     const defaults = dataSeries.filter(s => s.defaultVisible).map(s => s.id);
     setVisibleSeries(defaults);
     saveVisibleSeries(defaults);
+
+    const idleDefaults = ['pressure', 'temperature', 'flow', 'weight'];
+    setIdleVisibleSeries(idleDefaults);
+    saveIdleVisibleSeries(idleDefaults);
+
+    // Reset colors
+    setDataSeries(DATA_SERIES);
+    localStorage.removeItem('meticulous_series_colors');
   }, [dataSeries]);
   
   // WebSocket connection and event handlers
   useEffect(() => {
     wsClient.connect();
-    
+
     const unsubs = [
       wsClient.on('init', (data) => {
         setConnected(data.connected);
@@ -472,6 +548,9 @@ function App() {
       wsClient.on('status', (data) => {
         setStatus(data);
         setConnected(true);
+      }),
+      wsClient.on('temperatures', (data) => {
+        setTemperatures(data);
       }),
       wsClient.on('shot-data', (point) => {
         setShotData(prev => [...prev, point]);
@@ -489,7 +568,7 @@ function App() {
         setConnected(false);
       })
     ];
-    
+
     return () => unsubs.forEach(fn => fn());
   }, []);
   
@@ -514,12 +593,14 @@ function App() {
   switch (currentView) {
     case 'live':
       mainContent = html`
-        <${LiveView} 
-          status=${status} 
-          shotData=${shotData} 
-          connected=${connected} 
-          dataSeries=${dataSeries} 
-          visibleSeries=${visibleSeries} 
+        <${LiveView}
+          status=${status}
+          shotData=${shotData}
+          connected=${connected}
+          dataSeries=${dataSeries}
+          visibleSeries=${visibleSeries}
+          idleVisibleSeries=${idleVisibleSeries}
+          temperatures=${temperatures}
         />
       `;
       break;
@@ -528,11 +609,11 @@ function App() {
       break;
     case 'detail':
       mainContent = html`
-        <${ShotDetailView} 
-          shotId=${selectedShotId} 
-          onBack=${handleBackFromDetail} 
-          dataSeries=${dataSeries} 
-          visibleSeries=${visibleSeries} 
+        <${ShotDetailView}
+          shotId=${selectedShotId}
+          onBack=${handleBackFromDetail}
+          dataSeries=${dataSeries}
+          visibleSeries=${visibleSeries}
         />
       `;
       break;
@@ -541,12 +622,14 @@ function App() {
       break;
     default:
       mainContent = html`
-        <${LiveView} 
-          status=${status} 
-          shotData=${shotData} 
-          connected=${connected} 
-          dataSeries=${dataSeries} 
-          visibleSeries=${visibleSeries} 
+        <${LiveView}
+          status=${status}
+          shotData=${shotData}
+          connected=${connected}
+          dataSeries=${dataSeries}
+          visibleSeries=${visibleSeries}
+          idleVisibleSeries=${idleVisibleSeries}
+          temperatures=${temperatures}
         />
       `;
   }
@@ -577,12 +660,15 @@ function App() {
       />
       
       ${showSettings && html`
-        <${DataSeriesSelector} 
-          dataSeries=${dataSeries} 
-          visibleSeries=${visibleSeries} 
-          onToggle=${handleToggleSeries} 
-          onClose=${() => setShowSettings(false)} 
-          onReset=${handleResetSeries} 
+        <${DataSeriesSelector}
+          dataSeries=${dataSeries}
+          visibleSeries=${visibleSeries}
+          idleVisibleSeries=${idleVisibleSeries}
+          onToggle=${handleToggleSeries}
+          onIdleToggle=${handleToggleIdleSeries}
+          onColorChange=${handleColorChange}
+          onClose=${() => setShowSettings(false)}
+          onReset=${handleResetSeries}
         />
       `}
     </div>

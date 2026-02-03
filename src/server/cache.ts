@@ -1,6 +1,8 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
+import axios from 'axios';
+import crypto from 'crypto';
 import { config } from './config';
 import { HistoryEntry, HistoryListingEntry, ShotRating } from '@meticulous-home/espresso-api';
 
@@ -10,6 +12,8 @@ export interface CachedShot {
   time: number;
   profileName: string;
   profileId: string;
+  profileImage: string | null;
+  profileImageLocal: string | null;
   duration: number;
   yieldWeight: number;
   rating: ShotRating;
@@ -36,15 +40,24 @@ export class CacheManager {
       fs.mkdirSync(dbDir, { recursive: true });
     }
 
+    // Ensure images directory exists
+    if (!fs.existsSync(config.cache.imagesPath)) {
+      fs.mkdirSync(config.cache.imagesPath, { recursive: true });
+    }
+
     this.db = new Database(config.cache.dbPath);
     this.db.pragma('journal_mode = WAL'); // Better performance for Pi
     this.initSchema();
   }
 
   private initSchema(): void {
-    // Drop existing table to ensure clean schema
-    this.db.exec(`DROP TABLE IF EXISTS shots;`);
-    
+    // Only drop table if explicitly configured to reset schema
+    if (config.cache.resetSchemaOnStart) {
+      console.log('Resetting database schema (resetSchemaOnStart=true)');
+      this.db.exec(`DROP TABLE IF EXISTS shots;`);
+      this.db.exec(`DROP TABLE IF EXISTS machine_info;`);
+    }
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS shots (
         id INTEGER NOT NULL,
@@ -52,6 +65,8 @@ export class CacheManager {
         time INTEGER NOT NULL,
         profile_name TEXT NOT NULL,
         profile_id TEXT,
+        profile_image TEXT,
+        profile_image_local TEXT,
         duration REAL,
         yield_weight REAL,
         rating TEXT,
@@ -63,7 +78,7 @@ export class CacheManager {
 
       CREATE INDEX IF NOT EXISTS idx_shots_time ON shots(time DESC);
       CREATE INDEX IF NOT EXISTS idx_shots_profile ON shots(profile_name);
-      
+
       CREATE TABLE IF NOT EXISTS machine_info (
         key TEXT PRIMARY KEY,
         value TEXT,
@@ -76,14 +91,16 @@ export class CacheManager {
   upsertShotListing(shot: HistoryListingEntry): void {
     const duration = this.extractDuration(shot);
     const yieldWeight = this.extractYield(shot);
+    const profileImage = shot.profile?.display?.image || null;
 
     const stmt = this.db.prepare(`
-      INSERT INTO shots (id, machine_id, time, profile_name, profile_id, duration, yield_weight, rating, has_full_data)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+      INSERT INTO shots (id, machine_id, time, profile_name, profile_id, profile_image, duration, yield_weight, rating, has_full_data)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
       ON CONFLICT(machine_id, id) DO UPDATE SET
         time = excluded.time,
         profile_name = excluded.profile_name,
         profile_id = excluded.profile_id,
+        profile_image = excluded.profile_image,
         duration = COALESCE(excluded.duration, shots.duration),
         yield_weight = COALESCE(excluded.yield_weight, shots.yield_weight),
         rating = COALESCE(excluded.rating, shots.rating)
@@ -95,6 +112,7 @@ export class CacheManager {
       shot.time,
       shot.name || shot.profile?.name || 'Unknown',
       shot.profile?.id || null,
+      profileImage,
       duration,
       yieldWeight,
       shot.rating || null
@@ -105,15 +123,17 @@ export class CacheManager {
   upsertFullShot(shot: HistoryEntry): void {
     const duration = this.extractDuration(shot);
     const yieldWeight = this.extractYield(shot);
+    const profileImage = shot.profile?.display?.image || null;
     const dataJson = JSON.stringify(shot.data);
 
     const stmt = this.db.prepare(`
-      INSERT INTO shots (id, machine_id, time, profile_name, profile_id, duration, yield_weight, rating, has_full_data, data)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+      INSERT INTO shots (id, machine_id, time, profile_name, profile_id, profile_image, duration, yield_weight, rating, has_full_data, data)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
       ON CONFLICT(machine_id, id) DO UPDATE SET
         time = excluded.time,
         profile_name = excluded.profile_name,
         profile_id = excluded.profile_id,
+        profile_image = excluded.profile_image,
         duration = excluded.duration,
         yield_weight = excluded.yield_weight,
         rating = COALESCE(excluded.rating, shots.rating),
@@ -127,6 +147,7 @@ export class CacheManager {
       shot.time,
       shot.name || shot.profile?.name || 'Unknown',
       shot.profile?.id || null,
+      profileImage,
       duration,
       yieldWeight,
       shot.rating || null,
@@ -137,14 +158,15 @@ export class CacheManager {
   // Get shot listing (paginated)
   getShots(limit: number = 50, offset: number = 0): CachedShot[] {
     const stmt = this.db.prepare(`
-      SELECT id, machine_id as machineId, time, profile_name as profileName, 
-             profile_id as profileId, duration, yield_weight as yieldWeight, 
+      SELECT id, machine_id as machineId, time, profile_name as profileName,
+             profile_id as profileId, profile_image as profileImage,
+             profile_image_local as profileImageLocal, duration, yield_weight as yieldWeight,
              rating, has_full_data as hasFullData
       FROM shots
       ORDER BY time DESC
       LIMIT ? OFFSET ?
     `);
-    
+
     return stmt.all(limit, offset) as CachedShot[];
   }
 
@@ -152,12 +174,13 @@ export class CacheManager {
   getShot(id: number): CachedShot | null {
     const stmt = this.db.prepare(`
       SELECT id, machine_id as machineId, time, profile_name as profileName,
-             profile_id as profileId, duration, yield_weight as yieldWeight,
+             profile_id as profileId, profile_image as profileImage,
+             profile_image_local as profileImageLocal, duration, yield_weight as yieldWeight,
              rating, has_full_data as hasFullData, data
       FROM shots
       WHERE id = ?
     `);
-    
+
     return stmt.get(id) as CachedShot | null;
   }
 
@@ -247,6 +270,66 @@ export class CacheManager {
     const stmt = this.db.prepare('SELECT value FROM machine_info WHERE key = ?');
     const row = stmt.get(key) as { value: string } | undefined;
     return row?.value || null;
+  }
+
+  // Get the timestamp of the most recent shot
+  getLatestShotTime(): number {
+    const stmt = this.db.prepare('SELECT MAX(time) as maxTime FROM shots');
+    const row = stmt.get() as { maxTime: number | null } | undefined;
+    return row?.maxTime || 0;
+  }
+
+  // Check if a shot exists
+  shotExists(id: number, machineId: string): boolean {
+    const stmt = this.db.prepare('SELECT 1 FROM shots WHERE id = ? AND machine_id = ?');
+    return stmt.get(id, machineId) !== undefined;
+  }
+
+  // Download and save profile image locally
+  async downloadProfileImage(imageUrl: string, machineBaseUrl: string): Promise<string | null> {
+    try {
+      // Skip if it's a data URL
+      if (imageUrl.startsWith('data:')) {
+        return imageUrl;
+      }
+
+      // Build full URL if needed
+      let fullUrl = imageUrl;
+      if (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://')) {
+        fullUrl = `${machineBaseUrl}${imageUrl}`;
+      }
+
+      // Generate a filename based on the image URL hash
+      const hash = crypto.createHash('md5').update(fullUrl).digest('hex');
+      const ext = path.extname(imageUrl).split('?')[0] || '.jpg';
+      const filename = `${hash}${ext}`;
+      const localPath = path.join(config.cache.imagesPath, filename);
+
+      // Check if already downloaded
+      if (fs.existsSync(localPath)) {
+        return filename;
+      }
+
+      // Download the image
+      const response = await axios.get(fullUrl, {
+        responseType: 'arraybuffer',
+        timeout: 10000
+      });
+
+      // Save to disk
+      fs.writeFileSync(localPath, response.data);
+      console.log(`Downloaded profile image: ${filename}`);
+      return filename;
+    } catch (err) {
+      console.error('Failed to download profile image:', err);
+      return null;
+    }
+  }
+
+  // Update local image path for a shot
+  updateLocalImage(id: number, machineId: string, localImagePath: string): void {
+    const stmt = this.db.prepare('UPDATE shots SET profile_image_local = ? WHERE id = ? AND machine_id = ?');
+    stmt.run(localImagePath, id, machineId);
   }
 
   private extractDuration(shot: HistoryListingEntry | HistoryEntry): number {

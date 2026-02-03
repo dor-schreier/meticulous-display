@@ -14,7 +14,9 @@
   },
   "cache": {
     "maxShots": 500,
-    "dbPath": "./data/history.db"
+    "dbPath": "./data/history.db",
+    "resetSchemaOnStart": false,
+    "imagesPath": "./data/images"
   },
   "realtime": {
     "sampleRate": 10,
