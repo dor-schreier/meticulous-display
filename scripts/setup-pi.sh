@@ -93,42 +93,64 @@ Environment=NODE_ENV=production
 WantedBy=multi-user.target
 EOF
 
-# Create kiosk service
-echo "11. Creating kiosk service..."
-cat > /etc/systemd/system/meticulous-kiosk.service << EOF
+# Create X server service
+echo "11. Creating X server service..."
+cat > /etc/systemd/system/xserver.service << EOF
 [Unit]
-Description=Meticulous Display Kiosk
-After=meticulous-display.service
-Wants=meticulous-display.service
+Description=X Server for Meticulous Kiosk
+After=multi-user.target
 
 [Service]
 Type=simple
 User=$ACTUAL_USER
+WorkingDirectory=$ACTUAL_HOME
+Environment=HOME=$ACTUAL_HOME
+# Start X server on display :0
+ExecStart=/usr/bin/startx -- :0 vt7
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Create kiosk service
+echo "12. Creating kiosk service..."
+cat > /etc/systemd/system/meticulous-kiosk.service << EOF
+[Unit]
+Description=Meticulous Display Kiosk
+After=xserver.service meticulous-display.service
+Wants=meticulous-display.service
+Requires=xserver.service
+
+[Service]
+Type=simple
+User=$ACTUAL_USER
+WorkingDirectory=$ACTUAL_HOME
 Environment=DISPLAY=:0
-ExecStartPre=/bin/sleep 5
+Environment=XAUTHORITY=$ACTUAL_HOME/.Xauthority
+Environment=HOME=$ACTUAL_HOME
+ExecStartPre=/bin/sleep 10
 ExecStart=/bin/bash $APP_DIR/scripts/start-kiosk.sh
 Restart=on-failure
 RestartSec=10
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target
 EOF
 
 # Create kiosk start script
-echo "12. Creating kiosk start script..."
+echo "13. Creating kiosk start script..."
 cat > $APP_DIR/scripts/start-kiosk.sh << 'EOF'
 #!/bin/bash
 
-# Disable screen blanking
-xset s off
-xset s noblank
-xset -dpms
+# Wait for X server to be ready
+until xset q &>/dev/null; do
+  echo "Waiting for X server..."
+  sleep 1
+done
 
-# Hide cursor after 1 second of inactivity
-unclutter -idle 1 -root &
-
-# Wait for server to be ready
-sleep 3
+echo "X server ready, starting Chromium..."
 
 # Detect chromium command (chromium or chromium-browser)
 if command -v chromium &> /dev/null; then
@@ -155,12 +177,14 @@ $CHROMIUM_CMD \
   --disable-features=TranslateUI \
   --disable-pinch \
   --overscroll-history-navigation=0 \
+  --disable-dev-shm-usage \
+  --no-sandbox \
   http://localhost:3002
 EOF
 chmod +x $APP_DIR/scripts/start-kiosk.sh
 
-# Create autologin for kiosk
-echo "13. Setting up auto-login..."
+# Create autologin for kiosk (backup method)
+echo "14. Setting up auto-login (backup method)..."
 mkdir -p /etc/systemd/system/getty@tty1.service.d/
 cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf << EOF
 [Service]
@@ -168,12 +192,30 @@ ExecStart=
 ExecStart=-/sbin/agetty --autologin $ACTUAL_USER --noclear %I \$TERM
 EOF
 
-# Create .xinitrc for auto-starting X
+# Create .xinitrc for X configuration (used by xserver.service and manual startx)
 cat > $ACTUAL_HOME/.xinitrc << EOF
 #!/bin/bash
-exec /bin/bash $APP_DIR/scripts/start-kiosk.sh
+
+# Allow connections from local processes
+xhost +local:
+
+# Set proper X authority
+export XAUTHORITY=\$HOME/.Xauthority
+
+# Disable screen blanking
+xset s off
+xset s noblank
+xset -dpms
+
+# Hide cursor
+unclutter -idle 1 -root &
+
+# Wait for Chromium to start from systemd service
+# This .xinitrc is now only used for manual startx, not kiosk boot
+sleep infinity
 EOF
 chown $ACTUAL_USER:$ACTUAL_USER $ACTUAL_HOME/.xinitrc
+chmod +x $ACTUAL_HOME/.xinitrc
 
 # Add startx to .bash_profile
 if ! grep -q "startx" $ACTUAL_HOME/.bash_profile 2>/dev/null; then
@@ -187,12 +229,14 @@ EOF
 fi
 
 # Enable services
-echo "14. Enabling services..."
+echo "15. Enabling services..."
 systemctl daemon-reload
 systemctl enable meticulous-display.service
+systemctl enable xserver.service
+systemctl enable meticulous-kiosk.service
 
 # Optimize for Pi Zero 2W
-echo "15. Applying Pi optimizations..."
+echo "16. Applying Pi optimizations..."
 
 # Reduce GPU memory (we don't need much for Chromium 2D)
 if ! grep -q "gpu_mem=64" /boot/config.txt; then
@@ -204,7 +248,7 @@ systemctl disable bluetooth.service 2>/dev/null || true
 systemctl disable hciuart.service 2>/dev/null || true
 
 # Create local config template
-echo "16. Creating local config template..."
+echo "17. Creating local config template..."
 cat > $APP_DIR/config/local.json.example << EOF
 {
   "machine": {

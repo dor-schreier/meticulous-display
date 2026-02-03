@@ -9,7 +9,8 @@
       "Bash(node scripts/check-db.js:*)",
       "Bash(ls:*)",
       "Bash(node:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(bash -n:*)"
     ]
   }
 }
