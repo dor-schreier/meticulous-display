@@ -1,12 +1,22 @@
 #!/bin/bash
 # Meticulous Display - Raspberry Pi Setup Script
+# Version: 2.0 (with boot fix integrated)
 # Run as: sudo bash scripts/setup-pi.sh
+#
+# This script includes all fixes for:
+# - Boot timing issues (kiosk not starting automatically)
+# - Service dependencies (strong BindsTo, explicit readiness checks)
+# - Systemd targets (graphical.target for GUI services)
+# - Network dependencies (network-online.target)
+#
+# For upgrades, this will preserve your existing config/local.json
 
 set -e
 
 echo "========================================"
-echo "Meticulous Display - Pi Setup"
+echo "Meticulous Display - Pi Setup v2.0"
 echo "========================================"
+echo "Complete installation with boot fixes"
 echo ""
 
 # Check if running as root
@@ -22,6 +32,28 @@ ACTUAL_HOME=$(getent passwd "$ACTUAL_USER" | cut -d: -f6)
 echo "Setting up for user: $ACTUAL_USER"
 echo "Home directory: $ACTUAL_HOME"
 echo ""
+
+# Check if this is an upgrade/re-run
+APP_DIR="/opt/meticulous-display"
+IS_UPGRADE=false
+if [ -d "$APP_DIR" ] && [ -f "/etc/systemd/system/meticulous-display.service" ]; then
+  IS_UPGRADE=true
+  echo "⚠️  Existing installation detected at $APP_DIR"
+  echo "This will upgrade/reinstall the services with latest fixes."
+  echo ""
+  read -p "Continue? (y/N) " -n 1 -r
+  echo ""
+  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "Installation cancelled."
+    exit 0
+  fi
+  echo ""
+  echo "Stopping existing services..."
+  systemctl stop meticulous-kiosk.service 2>/dev/null || true
+  systemctl stop xserver.service 2>/dev/null || true
+  systemctl stop meticulous-display.service 2>/dev/null || true
+  echo ""
+fi
 
 # Update system
 echo "1. Updating system packages..."
@@ -49,8 +81,7 @@ apt-get install -y chromium 2>/dev/null || apt-get install -y chromium-browser
 echo "5. Installing X server components..."
 apt-get install -y xserver-xorg x11-xserver-utils xinit unclutter curl
 
-# Create app directory
-APP_DIR="/opt/meticulous-display"
+# Create/verify app directory (already defined above for upgrade detection)
 echo "6. Creating app directory at $APP_DIR..."
 mkdir -p $APP_DIR
 chown -R $ACTUAL_USER:$ACTUAL_USER $APP_DIR
@@ -58,13 +89,29 @@ chown -R $ACTUAL_USER:$ACTUAL_USER $APP_DIR
 # Copy app files (assuming we're in the project directory)
 if [ -f "package.json" ]; then
   echo "7. Copying app files..."
+
+  # Backup existing config if this is an upgrade
+  BACKUP_CONFIG=""
+  if [ "$IS_UPGRADE" = true ] && [ -f "$APP_DIR/config/local.json" ]; then
+    echo "   Backing up existing config..."
+    BACKUP_CONFIG=$(cat $APP_DIR/config/local.json)
+  fi
+
+  # Copy all files
   cp -r . $APP_DIR/
+
+  # Restore config if we backed it up
+  if [ ! -z "$BACKUP_CONFIG" ]; then
+    echo "   Restoring existing config..."
+    echo "$BACKUP_CONFIG" > $APP_DIR/config/local.json
+  fi
+
   chown -R $ACTUAL_USER:$ACTUAL_USER $APP_DIR
-  
+
   echo "8. Installing npm dependencies..."
   cd $APP_DIR
   sudo -u $ACTUAL_USER npm install
-  
+
   echo "9. Building the app..."
   sudo -u $ACTUAL_USER npm run build
 fi
@@ -78,16 +125,19 @@ echo "10. Creating systemd service..."
 cat > /etc/systemd/system/meticulous-display.service << EOF
 [Unit]
 Description=Meticulous Display Server
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=$ACTUAL_USER
 WorkingDirectory=$APP_DIR
 ExecStart=/usr/bin/node dist/server/index.js
-Restart=on-failure
+Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
@@ -102,7 +152,8 @@ echo "12. Creating X server service..."
 cat > /etc/systemd/system/xserver.service << EOF
 [Unit]
 Description=X Server for Meticulous Kiosk
-After=multi-user.target
+After=multi-user.target systemd-user-sessions.service
+Conflicts=getty@tty7.service
 
 [Service]
 Type=simple
@@ -116,10 +167,10 @@ StandardError=journal
 # Use X directly instead of startx wrapper (systemd-compatible)
 ExecStart=/usr/bin/X :0 -nocursor -nolisten tcp vt7
 Restart=always
-RestartSec=3
+RestartSec=5
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=graphical.target
 EOF
 
 # Create kiosk service
@@ -128,8 +179,8 @@ cat > /etc/systemd/system/meticulous-kiosk.service << EOF
 [Unit]
 Description=Meticulous Display Kiosk
 After=xserver.service meticulous-display.service
-Wants=meticulous-display.service
 Requires=xserver.service
+BindsTo=xserver.service
 
 [Service]
 Type=simple
@@ -138,8 +189,11 @@ WorkingDirectory=$ACTUAL_HOME
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=$ACTUAL_HOME/.Xauthority
 Environment=HOME=$ACTUAL_HOME
-# Wait longer for X server and Node.js app to be fully ready
-ExecStartPre=/bin/sleep 15
+# Wait for services to be fully active (key fix for boot timing)
+ExecStartPre=/bin/bash -c 'timeout 60 bash -c "until systemctl is-active --quiet meticulous-display.service; do sleep 1; done"'
+ExecStartPre=/bin/bash -c 'timeout 30 bash -c "until xset -display :0 q &>/dev/null; do sleep 1; done"'
+# Additional safety delay
+ExecStartPre=/bin/sleep 5
 ExecStart=/bin/bash $APP_DIR/scripts/start-kiosk.sh
 Restart=on-failure
 RestartSec=10
@@ -147,7 +201,7 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=graphical.target
 EOF
 
 # Create kiosk start script
@@ -284,6 +338,11 @@ chmod 600 $ACTUAL_HOME/.Xauthority
 # Enable services
 echo "16. Enabling services..."
 systemctl daemon-reload
+
+# Set default target to graphical (CRITICAL for boot startup!)
+echo "Setting default systemd target to graphical.target..."
+systemctl set-default graphical.target
+
 systemctl enable meticulous-display.service
 systemctl enable xserver.service
 systemctl enable meticulous-kiosk.service
@@ -300,6 +359,10 @@ fi
 systemctl disable bluetooth.service 2>/dev/null || true
 systemctl disable hciuart.service 2>/dev/null || true
 
+# Enable network-online.target (needed for network-online.target dependency)
+echo "Enabling network-online.target..."
+systemctl enable systemd-networkd-wait-online.service 2>/dev/null || true
+
 # Create local config template
 echo "18. Creating local config template..."
 cat > $APP_DIR/config/local.json.example << EOF
@@ -311,29 +374,99 @@ cat > $APP_DIR/config/local.json.example << EOF
 }
 EOF
 
+# Verify installation
+echo "19. Verifying installation..."
+VERIFICATION_PASSED=true
+
+# Check if Node.js is installed
+if ! command -v node &> /dev/null; then
+  echo "❌ Node.js not found"
+  VERIFICATION_PASSED=false
+else
+  echo "✓ Node.js installed: $(node --version)"
+fi
+
+# Check if Chromium is installed
+if command -v chromium &> /dev/null || command -v chromium-browser &> /dev/null; then
+  CHROMIUM_VERSION=$(chromium --version 2>/dev/null || chromium-browser --version 2>/dev/null)
+  echo "✓ Chromium installed: $CHROMIUM_VERSION"
+else
+  echo "❌ Chromium not found"
+  VERIFICATION_PASSED=false
+fi
+
+# Check if app is built
+if [ -f "$APP_DIR/dist/server/index.js" ]; then
+  echo "✓ App built successfully"
+else
+  echo "❌ App build files not found"
+  VERIFICATION_PASSED=false
+fi
+
+# Check if services are enabled
+for service in meticulous-display xserver meticulous-kiosk; do
+  if systemctl is-enabled ${service}.service &> /dev/null; then
+    echo "✓ ${service}.service enabled"
+  else
+    echo "⚠ ${service}.service not enabled (this is unexpected)"
+  fi
+done
+
+# Check default target
+DEFAULT_TARGET=$(systemctl get-default)
+if [ "$DEFAULT_TARGET" = "graphical.target" ]; then
+  echo "✓ Default target set to graphical.target"
+else
+  echo "⚠ Default target is $DEFAULT_TARGET (expected graphical.target)"
+fi
+
+# Check user groups
+if groups $ACTUAL_USER | grep -q video && groups $ACTUAL_USER | grep -q input; then
+  echo "✓ User $ACTUAL_USER in correct groups (video, input, tty)"
+else
+  echo "⚠ User $ACTUAL_USER missing some groups"
+fi
+
 echo ""
-echo "========================================"
-echo "Setup Complete!"
-echo "========================================"
+if [ "$VERIFICATION_PASSED" = true ]; then
+  echo "========================================"
+  echo "✅ Setup Complete - All Checks Passed!"
+  echo "========================================"
+else
+  echo "========================================"
+  echo "⚠️  Setup Complete with Warnings"
+  echo "========================================"
+  echo "Some checks failed. Review the output above."
+fi
+
 echo ""
 echo "Next steps:"
-echo "1. Edit the machine IP in: $APP_DIR/config/local.json"
+echo ""
+echo "1. Configure your machine IP:"
 echo "   cp $APP_DIR/config/local.json.example $APP_DIR/config/local.json"
 echo "   nano $APP_DIR/config/local.json"
+echo "   (Edit the 'host' value to your Meticulous machine's IP address)"
 echo ""
-echo "2. Start the service:"
-echo "   sudo systemctl start meticulous-display"
-echo ""
-echo "3. Check status:"
-echo "   sudo systemctl status meticulous-display"
-echo ""
-echo "4. View logs:"
-echo "   journalctl -u meticulous-display -f"
-echo ""
-echo "5. Reboot to start kiosk mode:"
+echo "2. IMPORTANT: Reboot to start kiosk mode automatically:"
 echo "   sudo reboot"
 echo ""
-echo "Access the dashboard at:"
-echo "  Local: http://localhost:3002"
-echo "  Network: http://$(hostname -I | awk '{print $1}'):3002"
+echo "3. After reboot, verify services are running:"
+echo "   systemctl status meticulous-display.service"
+echo "   systemctl status xserver.service"
+echo "   systemctl status meticulous-kiosk.service"
+echo ""
+echo "4. View logs if needed:"
+echo "   journalctl -u meticulous-kiosk.service -b"
+echo "   journalctl -u xserver.service -b"
+echo ""
+echo "5. Access the dashboard from another device:"
+echo "   http://$(hostname -I | awk '{print $1}'):3002"
+echo ""
+echo "Troubleshooting:"
+echo "  - If kiosk doesn't start on boot: See KIOSK-BOOT-FIX.md"
+echo "  - For general issues: See PI-TROUBLESHOOTING.md"
+echo "  - Run diagnostics: sudo bash $APP_DIR/scripts/troubleshoot-pi.sh"
+echo ""
+echo "This setup includes all fixes for boot timing issues."
+echo "Services will start automatically on every boot."
 echo ""

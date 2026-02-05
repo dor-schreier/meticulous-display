@@ -10,7 +10,8 @@
       "Bash(ls:*)",
       "Bash(node:*)",
       "Bash(npm install:*)",
-      "Bash(bash -n:*)"
+      "Bash(bash -n:*)",
+      "Bash(chmod:*)"
     ]
   }
 }
