@@ -11,7 +11,8 @@
       "Bash(node:*)",
       "Bash(npm install:*)",
       "Bash(bash -n:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(git add:*)"
     ]
   }
 }
