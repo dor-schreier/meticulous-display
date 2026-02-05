@@ -164,7 +164,7 @@ $CHROMIUM_CMD \
   --no-first-run \
   --start-fullscreen \
   --window-position=0,0 \
-  --window-size=800,480 \
+  --window-size=1024,600 \
   --disable-translate \
   --disable-features=TranslateUI \
   --disable-pinch \

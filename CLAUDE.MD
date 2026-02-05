@@ -549,12 +549,31 @@ sudo bash scripts/setup-pi.sh
 ```
 
 **What the setup script does:**
-1. Installs Node.js 18+
-2. Installs Chromium browser
+1. Installs Node.js 20+ and build dependencies
+2. Installs Chromium browser and X server components (including curl, unclutter)
 3. Builds the application (`npm install && npm run build`)
-4. Creates systemd service for auto-start
-5. Configures auto-login and kiosk mode
-6. Optimizes Pi Zero 2W settings (GPU memory, swap)
+4. Creates three systemd services with proper dependencies:
+   - `meticulous-display.service` - Node.js backend
+   - `xserver.service` - X Window System
+   - `meticulous-kiosk.service` - Chromium kiosk with 15s startup delay
+5. Creates enhanced startup script with health checks:
+   - Waits for X server to be ready (max 30s)
+   - Configures X settings (disable screensaver, power management)
+   - Waits for Node.js app to respond on localhost:3002 (max 60s)
+   - Clears Chromium crash flags
+   - Launches Chromium with optimized flags (incognito, disk-cache-size=1)
+   - Logs to `/tmp/chromium-kiosk.log`
+6. Fixes permissions:
+   - Creates `.Xauthority` with correct ownership (600)
+   - Adds user to video, input, and tty groups
+7. Optimizes Pi Zero 2W settings (GPU memory 64MB, disables Bluetooth)
+
+**Key improvements over basic setup:**
+- **Proper timing**: 15-second delay before kiosk starts + health checks
+- **Error handling**: Timeouts and error messages in startup script
+- **Logging**: Chromium output logged to `/tmp/chromium-kiosk.log`
+- **Reliability**: Clears crash flags, uses incognito mode, minimal cache
+- **Debuggability**: All services log to journalctl with StandardOutput/Error
 
 **Manual Service Management:**
 ```bash
@@ -649,10 +668,28 @@ sudo systemctl status meticulous-display
 - Check for multiple server instances
 - Restart server: `sudo systemctl restart meticulous-display`
 
-**Issue:** Pi touchscreen not responding
-- Check kiosk mode config
-- Verify Chromium is running: `ps aux | grep chromium`
-- Restart X server: `sudo systemctl restart lightdm`
+**Issue:** Pi shows blank screen with blinking cursor
+- This means X server started but Chromium didn't launch
+- Run diagnostic: `sudo bash scripts/troubleshoot-pi.sh`
+- Auto-fix: `sudo bash scripts/fix-kiosk.sh`
+- Check logs: `journalctl -u meticulous-kiosk -f`
+- See [PI-TROUBLESHOOTING.md](PI-TROUBLESHOOTING.md) for full guide
+
+**Issue:** Services starting too quickly
+- The setup script now includes proper timing delays (15s for kiosk)
+- Kiosk script waits for X server (`xset q`) and Node.js app (`curl localhost:3002`)
+- If still having issues, increase sleep in `/etc/systemd/system/meticulous-kiosk.service`
+
+**Issue:** Chromium won't start
+- Clear crash flags: `rm -rf ~/.config/chromium*/Singleton*`
+- Check if installed: `chromium --version` or `chromium-browser --version`
+- View Chromium log: `tail -f /tmp/chromium-kiosk.log`
+- Restart kiosk: `sudo systemctl restart meticulous-kiosk`
+
+**Issue:** X server permission denied
+- Fix authority file: `touch ~/.Xauthority && chmod 600 ~/.Xauthority`
+- Check groups: `groups` (should include video, input, tty)
+- Add to groups: `sudo usermod -a -G video,input,tty $USER`
 
 ## Testing
 

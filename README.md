@@ -98,28 +98,70 @@ sudo bash scripts/setup-pi.sh
 
 The setup script will:
 
-1. Install Node.js and dependencies
-2. Install Chromium for kiosk mode
+1. Install Node.js 20+ and build dependencies
+2. Install Chromium browser and X server components
 3. Build the application
-4. Create systemd services for auto-start
-5. Configure auto-login and kiosk mode
-6. Optimize settings for Pi Zero 2W
+4. Create three systemd services:
+   - `meticulous-display.service` - Node.js backend server
+   - `xserver.service` - X Window System for graphics
+   - `meticulous-kiosk.service` - Chromium in kiosk mode
+5. Configure proper startup timing and permissions
+6. Optimize settings for Pi Zero 2W (GPU memory, disabled services)
+
+After setup completes, configure your machine IP and reboot:
+
+```bash
+# Create configuration file
+cp /opt/meticulous-display/config/local.json.example \
+   /opt/meticulous-display/config/local.json
+
+# Edit with your machine's IP address
+sudo nano /opt/meticulous-display/config/local.json
+
+# Reboot to start kiosk mode
+sudo reboot
+```
+
+The dashboard will appear on the screen within 30-45 seconds after boot.
 
 ### Manual Service Management
 
 ```bash
-# Start the display server
+# Start/stop/restart services
 sudo systemctl start meticulous-display
-
-# Stop the server
-sudo systemctl stop meticulous-display
+sudo systemctl start xserver
+sudo systemctl start meticulous-kiosk
 
 # View logs
 journalctl -u meticulous-display -f
+journalctl -u meticulous-kiosk -f
 
-# Restart after config changes
-sudo systemctl restart meticulous-display
+# Check status
+sudo systemctl status meticulous-display
+sudo systemctl status xserver
+sudo systemctl status meticulous-kiosk
 ```
+
+### Troubleshooting
+
+If you see a blank screen after reboot:
+
+```bash
+# Run the diagnostic script
+sudo bash scripts/troubleshoot-pi.sh
+
+# Or fix common issues automatically
+sudo bash scripts/fix-kiosk.sh
+
+# Check logs
+journalctl -u meticulous-kiosk -f
+tail -f /tmp/chromium-kiosk.log
+```
+
+**Documentation:**
+- **[QUICK-REFERENCE.md](QUICK-REFERENCE.md)** - Common commands and quick fixes
+- **[PI-TROUBLESHOOTING.md](PI-TROUBLESHOOTING.md)** - Detailed troubleshooting guide
+- **[DEPLOYMENT-FIXES.md](DEPLOYMENT-FIXES.md)** - Technical details of recent improvements
 
 ## Architecture
 
