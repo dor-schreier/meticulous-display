@@ -2,16 +2,7 @@
   "permissions": {
     "allow": [
       "Bash(dir:*)",
-      "Bash(npm run build:*)",
-      "Bash(wc:*)",
-      "Bash(sqlite3:*)",
-      "Bash(node scripts/migrate-db.js:*)",
-      "Bash(node scripts/check-db.js:*)",
-      "Bash(ls:*)",
-      "Bash(node:*)",
-      "Bash(npm install:*)",
-      "Bash(bash -n:*)",
-      "mcp__vscode-mcp-server__list_files_code"
+      "Bash(npm run build:client:*)"
     ]
   }
 }

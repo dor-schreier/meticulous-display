@@ -291,6 +291,13 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+.stat-card__value--small {
+  font-size: var(--font-size-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .stat-card__label {
   font-size: var(--font-size-xs);
   color: var(--text-muted);
@@ -1059,13 +1066,266 @@ body {
   .modal {
     max-height: 90vh;
   }
-  
+
   .modal__header, .modal__body, .modal__footer {
     padding-left: var(--spacing-md);
     padding-right: var(--spacing-md);
   }
-  
+
   .series-toggle {
     padding: var(--spacing-sm);
+  }
+}
+
+/* ============================================
+   Shot Detail View - Responsive Layout
+   ============================================ */
+
+/* Shot detail wrapper for flexbox layouts */
+.shot-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.shot-detail__header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.shot-detail__content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  flex: 1;
+  min-height: 0;
+}
+
+/* Ensure chart container doesn't shrink excessively */
+.shot-detail__content > .chart-container {
+  flex-shrink: 0;
+}
+
+/* Stats grid in shot detail */
+.shot-detail__content > .stats-grid {
+  flex-shrink: 0;
+}
+
+/* Wide screens (landscape orientation, enough width for side-by-side) */
+@media (min-width: 800px) and (min-aspect-ratio: 4/3) {
+  .shot-detail__content {
+    flex-direction: row;
+    align-items: stretch;
+  }
+
+  .shot-detail__content > .chart-container {
+    flex: 1;
+    min-width: 0;
+    margin-bottom: 0;
+  }
+
+  .shot-detail__content > .stats-grid {
+    flex-shrink: 0;
+    width: 180px;
+    grid-template-columns: 1fr;
+    align-content: start;
+  }
+
+  .shot-detail__content > .stats-grid .stat-card {
+    padding: var(--spacing-sm);
+  }
+
+  .shot-detail__content > .stats-grid .stat-card__value {
+    font-size: var(--font-size-lg);
+  }
+}
+
+/* ============================================
+   Small/Compact Screens (7" display, phones)
+   ============================================ */
+
+/* Compact screens - vertical layout */
+@media (max-height: 700px), (max-width: 600px) {
+  .chart-container {
+    padding: var(--spacing-sm);
+    margin-bottom: var(--spacing-sm);
+  }
+
+  .chart-legend {
+    gap: var(--spacing-xs);
+    margin-top: var(--spacing-xs);
+    font-size: var(--font-size-xs);
+  }
+
+  .chart-legend__item {
+    padding: 2px 6px;
+  }
+
+  .stats-grid {
+    gap: var(--spacing-xs);
+  }
+
+  .stat-card {
+    padding: var(--spacing-xs) var(--spacing-sm);
+  }
+
+  .stat-card__value {
+    font-size: var(--font-size-base);
+  }
+
+  .stat-card__label {
+    font-size: 10px;
+  }
+
+  .stat-card__icon {
+    font-size: var(--font-size-sm);
+    margin-bottom: 0;
+  }
+}
+
+/* Very short screens (7" display in landscape: ~600px height) */
+@media (max-height: 650px) {
+  .app-main {
+    padding: var(--spacing-sm);
+  }
+
+  .chart-container {
+    height: auto;
+    max-height: 180px;
+  }
+
+  /* Compact legend for short screens */
+  .chart-legend {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: var(--spacing-xs);
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+
+  .chart-legend__item {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  /* Compact 4-column stats on short wide screens */
+  .stats-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .stat-card__icon {
+    display: none;
+  }
+}
+
+/* Narrow portrait screens (phones) */
+@media (max-width: 480px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .chart-legend {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .shot-detail__header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-sm);
+  }
+
+  .shot-detail__header h2 {
+    font-size: var(--font-size-base);
+    order: -1;
+  }
+
+  .rating-buttons {
+    align-self: flex-end;
+  }
+}
+
+/* Extra small screens */
+@media (max-width: 360px) {
+  .chart-legend__item {
+    font-size: 10px;
+    padding: 2px 4px;
+  }
+
+  .stat-card__value {
+    font-size: var(--font-size-sm);
+  }
+}
+
+/* ============================================
+   7" Kiosk Display (1024x600)
+   ============================================ */
+@media (min-width: 900px) and (max-width: 1100px) and (max-height: 650px) {
+  /* Optimized layout for 7" landscape kiosk */
+  .shot-detail {
+    gap: var(--spacing-sm);
+  }
+
+  .shot-detail__header {
+    gap: var(--spacing-sm);
+    padding-bottom: var(--spacing-xs);
+  }
+
+  .shot-detail__header h2 {
+    font-size: var(--font-size-base);
+  }
+
+  .shot-detail__content {
+    flex-direction: row;
+    gap: var(--spacing-sm);
+  }
+
+  .shot-detail__content > .chart-container {
+    flex: 1;
+    min-width: 0;
+    margin-bottom: 0;
+    padding: var(--spacing-sm);
+  }
+
+  /* Vertical stats sidebar for 7" kiosk */
+  .shot-detail__content > .stats-grid {
+    flex-shrink: 0;
+    width: 140px;
+    grid-template-columns: 1fr;
+    gap: var(--spacing-xs);
+    align-content: start;
+  }
+
+  .shot-detail__content > .stats-grid .stat-card {
+    padding: var(--spacing-xs) var(--spacing-sm);
+  }
+
+  .shot-detail__content > .stats-grid .stat-card__icon {
+    display: none;
+  }
+
+  .shot-detail__content > .stats-grid .stat-card__value {
+    font-size: var(--font-size-base);
+  }
+
+  .shot-detail__content > .stats-grid .stat-card__label {
+    font-size: 9px;
+  }
+
+  /* Compact chart legend */
+  .chart-legend {
+    margin-top: var(--spacing-xs);
+    gap: 4px;
+  }
+
+  .chart-legend__item {
+    padding: 2px 4px;
+    font-size: 10px;
   }
 }

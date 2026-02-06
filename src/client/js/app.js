@@ -286,8 +286,8 @@ function ShotDetailView({ shotId, onBack, dataSeries, visibleSeries }) {
   const imageUrl = profileImage ? `/api/profile-image/${encodeURIComponent(profileImage)}` : null;
 
   return html`
-    <div>
-      <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 16px">
+    <div class="shot-detail">
+      <div class="shot-detail__header">
         <button class="button button--secondary" onClick=${onBack}>
           <span class="nav-button__icon">${Icons.back}</span>
           Back
@@ -297,7 +297,7 @@ function ShotDetailView({ shotId, onBack, dataSeries, visibleSeries }) {
             <img src=${imageUrl} alt=${shot.profileName} />
           </div>
         `}
-        <h2 style="flex: 1">${shot.profileName}</h2>
+        <h2 style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">${shot.profileName}</h2>
         <div class="rating-buttons">
           <button
             class="rating-button ${shot.rating === 'like' ? 'rating-button--active' : ''}"
@@ -313,36 +313,42 @@ function ShotDetailView({ shotId, onBack, dataSeries, visibleSeries }) {
           </button>
         </div>
       </div>
-      ${shot.data?.length > 0 ? html`
-        <${ConfigurableChart} 
-          data=${shot.data} 
-          dataSeries=${dataSeries} 
-          visibleSeries=${visibleSeries} 
-          height=${250} 
-          isHistorical=${true} 
-        />
-      ` : html`
-        <div class="card" style="text-align: center; padding: 32px">
-          <p style="color: var(--text-muted)">No graph data available</p>
-        </div>
-      `}
-      <div class="stats-grid" style="margin-top: 16px">
-        <div class="stat-card">
-          <div class="stat-card__label">Duration</div>
-          <div class="stat-card__value">${formatTime(shot.duration)}</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-card__label">Yield</div>
-          <div class="stat-card__value">${formatWeight(shot.yieldWeight)}</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-card__label">Profile</div>
-          <div class="stat-card__value" style="font-size: 14px">${shot.profileName}</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-card__label">Date</div>
-          <div class="stat-card__value" style="font-size: 14px">
-            ${new Date(shot.time < 10000000000 ? shot.time * 1000 : shot.time).toLocaleDateString()}
+      <div class="shot-detail__content">
+        ${shot.data?.length > 0 ? html`
+          <${ConfigurableChart}
+            data=${shot.data}
+            dataSeries=${dataSeries}
+            visibleSeries=${visibleSeries}
+            height=${200}
+            isHistorical=${true}
+          />
+        ` : html`
+          <div class="card" style="text-align: center; padding: 32px">
+            <p style="color: var(--text-muted)">No graph data available</p>
+          </div>
+        `}
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-card__icon">⏱️</div>
+            <div class="stat-card__label">Duration</div>
+            <div class="stat-card__value">${formatTime(shot.duration)}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card__icon">⚖️</div>
+            <div class="stat-card__label">Yield</div>
+            <div class="stat-card__value">${formatWeight(shot.yieldWeight)}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card__icon">☕</div>
+            <div class="stat-card__label">Profile</div>
+            <div class="stat-card__value stat-card__value--small">${shot.profileName}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card__icon">📅</div>
+            <div class="stat-card__label">Date</div>
+            <div class="stat-card__value stat-card__value--small">
+              ${new Date(shot.time < 10000000000 ? shot.time * 1000 : shot.time).toLocaleDateString()}
+            </div>
           </div>
         </div>
       </div>
