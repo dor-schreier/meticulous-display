@@ -23,20 +23,11 @@ echo "1. Stopping all services..."
 systemctl stop meticulous-kiosk.service 2>/dev/null || true
 systemctl stop xserver.service 2>/dev/null || true
 systemctl stop meticulous-display.service 2>/dev/null || true
-sleep 2
 
 # Kill any remaining X processes
-echo "   Cleaning up processes..."
 killall X 2>/dev/null || true
-killall Xorg 2>/dev/null || true
 killall chromium 2>/dev/null || true
 killall chromium-browser 2>/dev/null || true
-sleep 1
-
-# Clean up X server lock files (CRITICAL!)
-echo "   Removing X server lock files..."
-rm -f /tmp/.X0-lock 2>/dev/null || true
-rm -f /tmp/.X11-unix/X0 2>/dev/null || true
 
 echo "2. Recreating improved systemd services..."
 
@@ -62,7 +53,7 @@ StandardError=journal
 WantedBy=multi-user.target
 EOF
 
-# X server service (improved with lock file cleanup)
+# X server service (improved)
 cat > /etc/systemd/system/xserver.service << EOF
 [Unit]
 Description=X Server for Meticulous Kiosk
@@ -78,17 +69,9 @@ TTYPath=/dev/tty7
 StandardInput=tty
 StandardOutput=journal
 StandardError=journal
-# Remove lock files before starting (prevents crash loops)
-ExecStartPre=/bin/sh -c 'rm -f /tmp/.X0-lock /tmp/.X11-unix/X0 2>/dev/null || true'
-# Start X server
-ExecStart=/usr/bin/X :0 -nolisten tcp vt7
-# Clean up on stop
-ExecStopPost=/bin/sh -c 'rm -f /tmp/.X0-lock /tmp/.X11-unix/X0 2>/dev/null || true'
+ExecStart=/usr/bin/X :0 -nocursor -nolisten tcp vt7
 Restart=always
 RestartSec=5
-# Prevent infinite restart loop
-StartLimitBurst=5
-StartLimitIntervalSec=60
 
 [Install]
 WantedBy=graphical.target
