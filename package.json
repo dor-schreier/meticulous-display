@@ -10,7 +10,8 @@
     "build:client": "node esbuild.config.js",
     "start": "node dist/server/index.js",
     "migrate": "node scripts/migrate-db.js",
-    "setup-pi": "bash scripts/setup-pi.sh"
+    "setup-pi": "bash scripts/setup-pi.sh",
+    "build-pi": "npm run build && sudo cp -r dist/* /opt/meticulous-display/dist/ && sudo systemctl restart meticulous-display"
   },
   "dependencies": {
     "@meticulous-home/espresso-api": "^0.10.8",

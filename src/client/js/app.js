@@ -319,7 +319,7 @@ function ShotDetailView({ shotId, onBack, dataSeries, visibleSeries }) {
             data=${shot.data}
             dataSeries=${dataSeries}
             visibleSeries=${visibleSeries}
-            height=${200}
+            height=${350}
             isHistorical=${true}
           />
         ` : html`
