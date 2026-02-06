@@ -1,28 +1,30 @@
 #!/bin/bash
-# Meticulous Display - Raspberry Pi Setup Script (Robust Kiosk Boot)
+# Meticulous Display - Raspberry Pi Zero 2W Setup Script (Raspbian 13 "trixie")
 # Run as: sudo bash scripts/setup-pi.sh
 #
-# Goal:
-# - After clean install, the Pi ALWAYS boots into kiosk mode (even after hard reboot)
-# - Single source of truth for X startup (no .bash_profile startx, no separate xserver.service)
+# Goals:
+# - Kiosk loads reliably after ANY reboot / hard power loss
+# - No desktop display manager fighting for :0
 # - systemd manages:
 #     1) meticulous-display.service (Node server)
 #     2) meticulous-kiosk.service (X + Chromium via xinit)
+# - Auto-login to console (tty1) so there is NO password prompt on boot
 
 set -euo pipefail
 
 echo "========================================"
 echo "Meticulous Display - Pi Setup (Kiosk)"
+echo "Pi: Zero 2W | OS: Raspbian 13 (trixie)"
 echo "========================================"
 echo ""
 
-# Check if running as root
+# Must run as root
 if [ "${EUID}" -ne 0 ]; then
   echo "Please run as root: sudo bash scripts/setup-pi.sh"
   exit 1
 fi
 
-# Get the actual user (not root)
+# Actual user
 ACTUAL_USER="${SUDO_USER:-$USER}"
 ACTUAL_HOME="$(getent passwd "$ACTUAL_USER" | cut -d: -f6)"
 
@@ -35,41 +37,42 @@ echo "Setting up for user: $ACTUAL_USER"
 echo "Home directory: $ACTUAL_HOME"
 echo ""
 
+APP_DIR="/opt/meticulous-display"
+
 # ----------------------------
-# 1) Update system
+# 1) Update system + basics
 # ----------------------------
 echo "1. Updating system packages..."
 apt-get update
 apt-get upgrade -y
 
-# Utilities we rely on
 echo "1.1 Installing base utilities..."
 apt-get install -y ca-certificates curl gnupg
 
 # ----------------------------
-# 2) Install Node.js 20 (if not installed)
+# 2) Install Node.js 20 (if missing)
 # ----------------------------
 echo "2. Installing Node.js..."
-if ! command -v node &> /dev/null; then
+if ! command -v node &>/dev/null; then
   curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
   apt-get install -y nodejs
 fi
 echo "Node.js version: $(node --version)"
 
 # ----------------------------
-# 3) Build dependencies for native modules (e.g. better-sqlite3)
+# 3) Build deps (better-sqlite3 etc.)
 # ----------------------------
 echo "3. Installing build dependencies..."
-apt-get install -y build-essential python3
+apt-get install -y build-essential python3 pkg-config
 
 # ----------------------------
-# 4) Install Chromium
+# 4) Chromium
 # ----------------------------
 echo "4. Installing Chromium..."
 apt-get install -y chromium 2>/dev/null || apt-get install -y chromium-browser
 
 # ----------------------------
-# 5) Install X server components for kiosk (xinit is key)
+# 5) X server stack for kiosk
 # ----------------------------
 echo "5. Installing X server components..."
 apt-get install -y xserver-xorg x11-xserver-utils xinit unclutter
@@ -77,18 +80,15 @@ apt-get install -y xserver-xorg x11-xserver-utils xinit unclutter
 # ----------------------------
 # 6) Create app directory
 # ----------------------------
-APP_DIR="/opt/meticulous-display"
 echo "6. Creating app directory at $APP_DIR..."
 mkdir -p "$APP_DIR"
 chown -R "$ACTUAL_USER:$ACTUAL_USER" "$APP_DIR"
 
 # ----------------------------
-# 7) Copy app + install deps + build (if script is run from repo root)
+# 7) Copy app + install deps + build (run from repo root)
 # ----------------------------
 if [ -f "package.json" ]; then
   echo "7. Copying app files..."
-  # copy contents of current dir into APP_DIR (including scripts/)
-  # trailing /. ensures we copy contents not the parent folder name
   cp -r ./. "$APP_DIR/"
   chown -R "$ACTUAL_USER:$ACTUAL_USER" "$APP_DIR"
 
@@ -101,17 +101,17 @@ if [ -f "package.json" ]; then
 else
   echo "NOTE: package.json not found in current directory."
   echo "      Skipping app copy/install/build."
-  echo "      Ensure you run this script from the project root."
+  echo "      Run this script from the project root."
 fi
 
-# Data directory
+# Data dir
 mkdir -p "$APP_DIR/data"
 chown -R "$ACTUAL_USER:$ACTUAL_USER" "$APP_DIR/data"
 
 # ----------------------------
-# 10) Create systemd service for Node server
+# 10) Node server systemd unit (restart always)
 # ----------------------------
-echo "10. Creating systemd service for Meticulous Display server..."
+echo "10. Creating meticulous-display.service..."
 cat > /etc/systemd/system/meticulous-display.service << EOF
 [Unit]
 Description=Meticulous Display Server
@@ -132,33 +132,45 @@ WantedBy=multi-user.target
 EOF
 
 # ----------------------------
-# 11) Add user to video/input groups (common for kiosk/X access)
+# 11) Permissions for X / input
 # ----------------------------
 echo "11. Adding user to video and input groups..."
 usermod -a -G video,input "$ACTUAL_USER"
 
 # ----------------------------
-# 12) Disable any display manager / GUI that might steal :0
-#     and set default boot to console for appliance-like kiosk behavior
+# 12) Disable display managers + boot to console
 # ----------------------------
-echo "12. Disabling display managers (if present) and setting console boot target..."
+echo "12. Disabling display managers and setting console boot target..."
 systemctl disable --now lightdm 2>/dev/null || true
 systemctl disable --now gdm 2>/dev/null || true
 systemctl disable --now sddm 2>/dev/null || true
 
-# Boot to console; kiosk service will start X itself via xinit
 systemctl set-default multi-user.target
 
 # ----------------------------
-# 13) Create kiosk session script (runs inside X via xinit)
+# 13) Enable console auto-login (tty1) so you don't get a password prompt
 # ----------------------------
-echo "13. Creating kiosk session script..."
+echo "13. Enabling console auto-login on tty1..."
+mkdir -p /etc/systemd/system/getty@tty1.service.d/
+cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf << EOF
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin $ACTUAL_USER --noclear %I \$TERM
+Type=idle
+EOF
+
+# ----------------------------
+# 14) Kiosk session script (runs inside X via xinit)
+#     - waits for server
+#     - launches chromium kiosk
+# ----------------------------
+echo "14. Creating kiosk session script..."
 mkdir -p "$APP_DIR/scripts"
 cat > "$APP_DIR/scripts/kiosk-session.sh" << 'EOF'
 #!/bin/bash
 set -euo pipefail
 
-# Basic X session hardening
+# Prevent blanking/power save
 xset s off || true
 xset s noblank || true
 xset -dpms || true
@@ -166,7 +178,7 @@ xset -dpms || true
 # Hide cursor
 unclutter -idle 0.5 -root &
 
-# Wait for the app server to respond (avoid blank kiosk)
+# Wait for the Node server to respond
 until curl -fsS http://127.0.0.1:3002 >/dev/null 2>&1; do
   echo "Waiting for Meticulous server on http://127.0.0.1:3002 ..."
   sleep 1
@@ -182,7 +194,12 @@ else
   exit 1
 fi
 
+# A lightweight writable profile dir (helps avoid "crash restore" prompts)
+PROFILE_DIR="${HOME}/.config/meticulous-kiosk-chromium"
+mkdir -p "$PROFILE_DIR"
+
 exec $CHROMIUM_CMD \
+  --user-data-dir="$PROFILE_DIR" \
   --kiosk \
   --noerrdialogs \
   --disable-infobars \
@@ -205,14 +222,35 @@ chmod +x "$APP_DIR/scripts/kiosk-session.sh"
 chown -R "$ACTUAL_USER:$ACTUAL_USER" "$APP_DIR/scripts"
 
 # ----------------------------
-# 14) Create ONE kiosk systemd service (X + Chromium via xinit)
-#     No separate xserver.service, no .bash_profile startx
+# 15) Safe cleanup: clear stale :0 lock ONLY if no X is running
+#     (prevents rare cases after hard power loss)
 # ----------------------------
-echo "14. Creating kiosk systemd service (xinit)..."
+echo "15. Adding safe stale X lock cleanup..."
+cat > "$APP_DIR/scripts/cleanup-x-locks.sh" << 'EOF'
+#!/bin/bash
+set -euo pipefail
+
+# If any X server is running, do nothing
+if pgrep -x Xorg >/dev/null 2>&1 || pgrep -x X >/dev/null 2>&1; then
+  exit 0
+fi
+
+# Remove stale locks/sockets (safe when no X is running)
+rm -f /tmp/.X0-lock 2>/dev/null || true
+rm -f /tmp/.X11-unix/X0 2>/dev/null || true
+EOF
+chmod +x "$APP_DIR/scripts/cleanup-x-locks.sh"
+chown "$ACTUAL_USER:$ACTUAL_USER" "$APP_DIR/scripts/cleanup-x-locks.sh"
+
+# ----------------------------
+# 16) Kiosk systemd unit: xinit starts X + runs kiosk-session.sh
+#     Use vt1 so it shows on the main console, and so autologin is consistent.
+# ----------------------------
+echo "16. Creating meticulous-kiosk.service..."
 cat > /etc/systemd/system/meticulous-kiosk.service << EOF
 [Unit]
 Description=Meticulous Kiosk (X + Chromium)
-After=network-online.target meticulous-display.service
+After=network-online.target meticulous-display.service getty@tty1.service
 Wants=network-online.target meticulous-display.service
 
 [Service]
@@ -220,9 +258,11 @@ User=$ACTUAL_USER
 Environment=HOME=$ACTUAL_HOME
 WorkingDirectory=$ACTUAL_HOME
 
-# Start Xorg on :0 and run kiosk-session.sh inside it.
-# vt7 is typical; if you prefer vt1, change vt7->vt1.
-ExecStart=/usr/bin/xinit $APP_DIR/scripts/kiosk-session.sh -- :0 vt7 -nolisten tcp -nocursor
+# Clean up stale locks after power loss (only when safe)
+ExecStartPre=$APP_DIR/scripts/cleanup-x-locks.sh
+
+# Start Xorg on :0, visible on tty1
+ExecStart=/usr/bin/xinit $APP_DIR/scripts/kiosk-session.sh -- :0 vt1 -nolisten tcp -nocursor
 
 Restart=always
 RestartSec=2
@@ -234,41 +274,46 @@ WantedBy=multi-user.target
 EOF
 
 # ----------------------------
-# 15) Remove/disable old conflicting services if they exist
+# 17) Remove/disable old conflicting services (if they exist)
 # ----------------------------
-echo "15. Disabling any previous conflicting X services (if present)..."
+echo "17. Disabling any previous conflicting X services..."
 systemctl disable --now xserver.service 2>/dev/null || true
 rm -f /etc/systemd/system/xserver.service 2>/dev/null || true
 
-# Also remove the tty1 autologin drop-in if you previously created it (optional)
-rm -f /etc/systemd/system/getty@tty1.service.d/autologin.conf 2>/dev/null || true
-rmdir /etc/systemd/system/getty@tty1.service.d 2>/dev/null || true
+# Remove .bash_profile startx hack if it exists (prevents double X)
+if [ -f "$ACTUAL_HOME/.bash_profile" ]; then
+  # Remove the exact block if present
+  sed -i '/# Auto-start X on tty1/,+4d' "$ACTUAL_HOME/.bash_profile" 2>/dev/null || true
+  chown "$ACTUAL_USER:$ACTUAL_USER" "$ACTUAL_HOME/.bash_profile" || true
+fi
 
 # ----------------------------
-# 16) Enable services
+# 18) Enable services
 # ----------------------------
-echo "16. Enabling services..."
+echo "18. Enabling services..."
 systemctl daemon-reload
 systemctl enable meticulous-display.service
 systemctl enable meticulous-kiosk.service
 
+# Ensure getty@tty1 uses the new drop-in
+systemctl daemon-reload
+systemctl restart getty@tty1.service || true
+
 # ----------------------------
-# 17) Pi optimizations (optional)
+# 19) Pi Zero 2W optimizations (optional)
 # ----------------------------
-echo "17. Applying Pi optimizations..."
-# Reduce GPU memory (tweak if you see rendering issues)
+echo "19. Applying Pi optimizations..."
 if [ -f /boot/config.txt ] && ! grep -q "^gpu_mem=64" /boot/config.txt; then
   echo "gpu_mem=64" >> /boot/config.txt
 fi
 
-# Disable unnecessary services (optional)
 systemctl disable bluetooth.service 2>/dev/null || true
 systemctl disable hciuart.service 2>/dev/null || true
 
 # ----------------------------
-# 18) Local config template
+# 20) Local config template
 # ----------------------------
-echo "18. Creating local config template..."
+echo "20. Creating local config template..."
 mkdir -p "$APP_DIR/config"
 cat > "$APP_DIR/config/local.json.example" << EOF
 {
@@ -290,7 +335,7 @@ echo "1. Create and edit local config:"
 echo "   cp $APP_DIR/config/local.json.example $APP_DIR/config/local.json"
 echo "   nano $APP_DIR/config/local.json"
 echo ""
-echo "2. Start services now (no reboot required):"
+echo "2. Start services now (optional, no reboot required):"
 echo "   sudo systemctl start meticulous-display"
 echo "   sudo systemctl start meticulous-kiosk"
 echo ""
@@ -302,7 +347,7 @@ echo "4. View logs:"
 echo "   journalctl -u meticulous-display -f"
 echo "   journalctl -u meticulous-kiosk -f"
 echo ""
-echo "5. Reboot to verify kiosk auto-start:"
+echo "5. Reboot to verify kiosk auto-start and autologin:"
 echo "   sudo reboot"
 echo ""
 echo "Access the dashboard at:"
