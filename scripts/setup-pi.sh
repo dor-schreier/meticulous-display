@@ -250,24 +250,44 @@ echo "16. Creating meticulous-kiosk.service..."
 cat > /etc/systemd/system/meticulous-kiosk.service << EOF
 [Unit]
 Description=Meticulous Kiosk (X + Chromium)
-After=network-online.target meticulous-display.service getty@tty1.service
+After=systemd-user-sessions.service network-online.target meticulous-display.service
 Wants=network-online.target meticulous-display.service
+Conflicts=getty@tty1.service
+After=getty@tty1.service
 
 [Service]
-User=$ACTUAL_USER
-Environment=HOME=$ACTUAL_HOME
-WorkingDirectory=$ACTUAL_HOME
+Type=simple
 
-# Clean up stale locks after power loss (only when safe)
-ExecStartPre=$APP_DIR/scripts/cleanup-x-locks.sh
+# Run kiosk as user
+User=met
+WorkingDirectory=/home/met
 
-# Start Xorg on :0, visible on tty1
-ExecStart=/usr/bin/xinit $APP_DIR/scripts/kiosk-session.sh -- :0 vt1 -nolisten tcp -nocursor
+# Let ExecStartPre run as root if needed, then drop to User=met
+PermissionsStartOnly=true
+ExecStartPre=/opt/meticulous-display/scripts/cleanup-x-locks.sh
+
+# Make Xorg.wrap consider this a "console" session
+PAMName=login
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+UtmpIdentifier=tty1
+UtmpMode=user
+
+Environment=HOME=/home/met
+Environment=USER=met
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/met/.Xauthority
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+
+ExecStart=/usr/bin/xinit /opt/meticulous-display/scripts/kiosk-session.sh -- :0 vt1 -nolisten tcp -nocursor
 
 Restart=always
 RestartSec=2
-TimeoutStopSec=5
-KillMode=process
 
 [Install]
 WantedBy=multi-user.target
