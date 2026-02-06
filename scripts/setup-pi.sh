@@ -47,7 +47,7 @@ apt-get install -y chromium 2>/dev/null || apt-get install -y chromium-browser
 
 # Install X server and utils for kiosk
 echo "5. Installing X server components..."
-apt-get install -y xserver-xorg x11-xserver-utils xinit unclutter curl
+apt-get install -y xserver-xorg x11-xserver-utils xinit unclutter
 
 # Create app directory
 APP_DIR="/opt/meticulous-display"
@@ -94,8 +94,8 @@ WantedBy=multi-user.target
 EOF
 
 # Add user to video group for X server hardware access
-echo "11. Adding user to video, input, and tty groups..."
-usermod -a -G video,input,tty $ACTUAL_USER
+echo "11. Adding user to video and input groups..."
+usermod -a -G video,input $ACTUAL_USER
 
 # Create X server service
 echo "12. Creating X server service..."
@@ -138,13 +138,10 @@ WorkingDirectory=$ACTUAL_HOME
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=$ACTUAL_HOME/.Xauthority
 Environment=HOME=$ACTUAL_HOME
-# Wait longer for X server and Node.js app to be fully ready
-ExecStartPre=/bin/sleep 15
+ExecStartPre=/bin/sleep 10
 ExecStart=/bin/bash $APP_DIR/scripts/start-kiosk.sh
 Restart=on-failure
 RestartSec=10
-StandardOutput=journal
-StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
@@ -155,67 +152,25 @@ echo "14. Creating kiosk start script..."
 cat > $APP_DIR/scripts/start-kiosk.sh << 'EOF'
 #!/bin/bash
 
-echo "Kiosk start script initiated at $(date)"
-
-# Wait for X server to be ready (with timeout)
-MAX_WAIT=30
-WAIT_COUNT=0
-echo "Waiting for X server..."
+# Wait for X server to be ready
 until xset q &>/dev/null; do
-  if [ $WAIT_COUNT -ge $MAX_WAIT ]; then
-    echo "ERROR: X server did not start within ${MAX_WAIT} seconds"
-    exit 1
-  fi
-  echo "X server not ready yet... ($WAIT_COUNT/$MAX_WAIT)"
+  echo "Waiting for X server..."
   sleep 1
-  ((WAIT_COUNT++))
 done
-echo "X server is ready!"
 
-# Configure X settings
-echo "Configuring X settings..."
-xset s off         # Disable screensaver
-xset s noblank     # Don't blank the screen
-xset -dpms         # Disable power management
+echo "X server ready, starting Chromium..."
 
-# Start unclutter to hide cursor
-if command -v unclutter &> /dev/null; then
-  echo "Starting unclutter..."
-  unclutter -idle 1 -root &
-fi
-
-# Wait for localhost:3002 to be available (Node.js app)
-echo "Waiting for Node.js app at localhost:3002..."
-MAX_WAIT=60
-WAIT_COUNT=0
-until curl -s http://localhost:3002 > /dev/null 2>&1; do
-  if [ $WAIT_COUNT -ge $MAX_WAIT ]; then
-    echo "WARNING: Node.js app not responding after ${MAX_WAIT} seconds, starting Chromium anyway..."
-    break
-  fi
-  echo "Node.js app not ready yet... ($WAIT_COUNT/$MAX_WAIT)"
-  sleep 1
-  ((WAIT_COUNT++))
-done
-echo "Node.js app is ready (or timeout reached)!"
-
-# Detect chromium command
+# Detect chromium command (chromium or chromium-browser)
 if command -v chromium &> /dev/null; then
   CHROMIUM_CMD="chromium"
 elif command -v chromium-browser &> /dev/null; then
   CHROMIUM_CMD="chromium-browser"
 else
-  echo "ERROR: Chromium not found!"
+  echo "Chromium not found!"
   exit 1
 fi
-echo "Using Chromium command: $CHROMIUM_CMD"
-
-# Clear any previous Chromium crash flags
-rm -rf ~/.config/chromium/Singleton* 2>/dev/null || true
-rm -rf ~/.config/chromium-browser/Singleton* 2>/dev/null || true
 
 # Start Chromium in kiosk mode
-echo "Starting Chromium in kiosk mode at $(date)..."
 $CHROMIUM_CMD \
   --kiosk \
   --noerrdialogs \
@@ -232,9 +187,7 @@ $CHROMIUM_CMD \
   --overscroll-history-navigation=0 \
   --disable-dev-shm-usage \
   --no-sandbox \
-  --incognito \
-  --disk-cache-size=1 \
-  http://localhost:3002 2>&1 | tee -a /tmp/chromium-kiosk.log
+  http://localhost:3002
 EOF
 chmod +x $APP_DIR/scripts/start-kiosk.sh
 
@@ -247,7 +200,7 @@ ExecStart=
 ExecStart=-/sbin/agetty --autologin $ACTUAL_USER --noclear %I \$TERM
 EOF
 
-# Create .xinitrc for X configuration (used by manual startx only)
+# Create .xinitrc for X configuration (used by xserver.service and manual startx)
 cat > $ACTUAL_HOME/.xinitrc << EOF
 #!/bin/bash
 
@@ -263,33 +216,35 @@ xset s noblank
 xset -dpms
 
 # Hide cursor
-if command -v unclutter &> /dev/null; then
-  unclutter -idle 1 -root &
-fi
+unclutter -idle 1 -root &
 
-# Wait indefinitely (kiosk service will handle Chromium)
+# Wait for Chromium to start from systemd service
+# This .xinitrc is now only used for manual startx, not kiosk boot
 sleep infinity
 EOF
 chown $ACTUAL_USER:$ACTUAL_USER $ACTUAL_HOME/.xinitrc
 chmod +x $ACTUAL_HOME/.xinitrc
 
-# Fix .Xauthority permissions
-echo "15. Fixing X authority permissions..."
-touch $ACTUAL_HOME/.Xauthority
-chown $ACTUAL_USER:$ACTUAL_USER $ACTUAL_HOME/.Xauthority
-chmod 600 $ACTUAL_HOME/.Xauthority
-
-# NOTE: We don't add auto-startx to .bash_profile because systemd handles X server now
+# Add startx to .bash_profile
+if ! grep -q "startx" $ACTUAL_HOME/.bash_profile 2>/dev/null; then
+  cat >> $ACTUAL_HOME/.bash_profile << 'EOF'
+# Auto-start X on tty1
+if [ -z "$DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
+  exec startx
+fi
+EOF
+  chown $ACTUAL_USER:$ACTUAL_USER $ACTUAL_HOME/.bash_profile
+fi
 
 # Enable services
-echo "16. Enabling services..."
+echo "15. Enabling services..."
 systemctl daemon-reload
 systemctl enable meticulous-display.service
 systemctl enable xserver.service
 systemctl enable meticulous-kiosk.service
 
 # Optimize for Pi Zero 2W
-echo "17. Applying Pi optimizations..."
+echo "16. Applying Pi optimizations..."
 
 # Reduce GPU memory (we don't need much for Chromium 2D)
 if ! grep -q "gpu_mem=64" /boot/config.txt; then
@@ -301,7 +256,7 @@ systemctl disable bluetooth.service 2>/dev/null || true
 systemctl disable hciuart.service 2>/dev/null || true
 
 # Create local config template
-echo "18. Creating local config template..."
+echo "17. Creating local config template..."
 cat > $APP_DIR/config/local.json.example << EOF
 {
   "machine": {
