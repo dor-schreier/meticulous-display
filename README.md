@@ -82,7 +82,7 @@ Create `config/local.json` to override default settings:
 - 7" touchscreen (800x480 or 1024x600)
 - MicroSD card (8GB+)
 
-### Automatic Setup (One Command!)
+### Automatic Setup
 
 ```bash
 # Copy the project to your Pi
@@ -91,27 +91,22 @@ scp -r . pi@raspberrypi.local:~/meticulous-display/
 # SSH into the Pi
 ssh pi@raspberrypi.local
 
-# Run the setup script (v2.0 - includes all boot fixes!)
+# Run the setup script
 cd ~/meticulous-display
 sudo bash scripts/setup-pi.sh
 ```
 
-**What the setup script does:**
+The setup script will:
 
-1. ✅ Installs Node.js 20+ and build dependencies
-2. ✅ Installs Chromium browser and X server components
-3. ✅ Builds the application
-4. ✅ Creates three systemd services with **strong dependencies**:
+1. Install Node.js 20+ and build dependencies
+2. Install Chromium browser and X server components
+3. Build the application
+4. Create three systemd services:
    - `meticulous-display.service` - Node.js backend server
    - `xserver.service` - X Window System for graphics
    - `meticulous-kiosk.service` - Chromium in kiosk mode
-5. ✅ Configures **boot-time startup** with readiness checks (fixes timing issues!)
-6. ✅ Sets systemd target to `graphical.target` (required for GUI)
-7. ✅ Fixes permissions and X server authentication
-8. ✅ Optimizes for Pi Zero 2W (GPU memory, disabled Bluetooth)
-9. ✅ Verifies installation with comprehensive checks
-
-**Upgrade-safe:** If you're upgrading, the script will preserve your existing `config/local.json`.
+5. Configure proper startup timing and permissions
+6. Optimize settings for Pi Zero 2W (GPU memory, disabled services)
 
 After setup completes, configure your machine IP and reboot:
 
@@ -128,8 +123,6 @@ sudo reboot
 ```
 
 The dashboard will appear on the screen within 30-45 seconds after boot.
-
-**Note:** Setup v2.0 includes all boot timing fixes. Services will start automatically on every reboot - no additional configuration needed! 🎉
 
 ### Manual Service Management
 
@@ -151,35 +144,24 @@ sudo systemctl status meticulous-kiosk
 
 ### Troubleshooting
 
-**Kiosk not starting on boot?**
-
-If you installed with an older version of the setup script:
-```bash
-cd /opt/meticulous-display
-git pull
-sudo bash scripts/fix-kiosk-boot.sh
-sudo reboot
-```
-
-**Other issues:**
+If you see a blank screen after reboot:
 
 ```bash
 # Run the diagnostic script
-sudo bash /opt/meticulous-display/scripts/troubleshoot-pi.sh
+sudo bash scripts/troubleshoot-pi.sh
 
 # Or fix common issues automatically
-sudo bash /opt/meticulous-display/scripts/fix-kiosk.sh
+sudo bash scripts/fix-kiosk.sh
 
 # Check logs
-journalctl -u meticulous-kiosk -b
+journalctl -u meticulous-kiosk -f
 tail -f /tmp/chromium-kiosk.log
 ```
 
 **Documentation:**
-- **[KIOSK-BOOT-FIX.md](KIOSK-BOOT-FIX.md)** - Boot timing issue explanation and fix
-- **[PI-TROUBLESHOOTING.md](PI-TROUBLESHOOTING.md)** - Comprehensive troubleshooting guide
-- **[QUICK-REFERENCE.md](QUICK-REFERENCE.md)** - Common commands cheat sheet
-- **[SETUP-PI-CHANGELOG.md](SETUP-PI-CHANGELOG.md)** - What's new in v2.0
+- **[QUICK-REFERENCE.md](QUICK-REFERENCE.md)** - Common commands and quick fixes
+- **[PI-TROUBLESHOOTING.md](PI-TROUBLESHOOTING.md)** - Detailed troubleshooting guide
+- **[DEPLOYMENT-FIXES.md](DEPLOYMENT-FIXES.md)** - Technical details of recent improvements
 
 ## Architecture
 

@@ -1,21 +1,5 @@
 # Raspberry Pi Kiosk Troubleshooting Guide
 
-## Symptoms: Kiosk Not Starting on Boot
-
-**Problem:** Services work when started manually (`systemctl start meticulous-kiosk.service`) but don't start automatically after reboot.
-
-**Solution:** This is a systemd service dependency timing issue. Run the boot fix:
-
-```bash
-cd /opt/meticulous-display
-sudo bash scripts/fix-kiosk-boot.sh
-sudo reboot
-```
-
-**Full explanation and manual fix:** See [KIOSK-BOOT-FIX.md](KIOSK-BOOT-FIX.md)
-
----
-
 ## Symptoms: Blank Screen with Blinking Cursor
 
 This happens when the X server starts but Chromium (the kiosk browser) doesn't launch properly.
